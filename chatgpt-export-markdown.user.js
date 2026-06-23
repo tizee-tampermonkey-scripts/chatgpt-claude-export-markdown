@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         ChatGPT / Claude Export to Markdown
-// @namespace    http://tampermonkey.net/
+// @namespace    http://github.com/tizee-tampermonkey-scripts/chatgpt-claude-export-markdown/
 // @version      1.0.0
 // @description  Copy OpenAI ChatGPT or Claude.ai conversations as Markdown, with options to open or download.
 // @author       tizee
