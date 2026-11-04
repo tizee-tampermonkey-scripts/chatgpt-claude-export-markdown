@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude Export to Markdown
 // @namespace    http://github.com/tizee-tampermonkey-scripts/chatgpt-claude-export-markdown/
-// @version      1.0.0
+// @version      1.1.0
 // @description  Copy OpenAI ChatGPT or Claude.ai conversations as Markdown, with options to open or download.
 // @author       tizee
 // @match        https://chatgpt.com/*
@@ -39,10 +39,58 @@
 
     function cleanNode(node, extraSelectors = '') {
         const clone = node.cloneNode(true);
-        const selectors = ['button', 'svg', '[class*="button"]', '[class*="copy"]', '[class*="action"]'];
+        const selectors = [
+            'button',
+            'svg',
+            'img',
+            '[hidden]',
+            '[class*="button"]',
+            '[class*="copy"]',
+            '[class*="action"]',
+            // ChatGPT: role headings ("You said:") and citation badges
+            'h4[data-conversation-role]',
+            '[data-d-component="badge"]',
+            '[data-markdown-copy="exclude"]',
+        ];
         if (extraSelectors) selectors.push(extraSelectors);
         clone.querySelectorAll(selectors.join(', ')).forEach((n) => n.remove());
         return clone;
+    }
+
+    function katexToMd(node) {
+        const tex = node.querySelector('annotation[encoding="application/x-tex"]');
+        const src = (tex ? tex.textContent : node.textContent || '').trim();
+        return node.classList.contains('katex-display') ? `\n$$\n${src}\n$$\n` : `$${src}$`;
+    }
+
+    function listToMd(list, ordered) {
+        let out = '';
+        let n = 1;
+        for (const li of list.children) {
+            if (li.tagName.toLowerCase() !== 'li') continue;
+            const inner = processContent(li);
+            if (!inner) continue;
+            const marker = ordered ? `${n++}. ` : '- ';
+            out += marker + inner.replace(/\n+/g, '\n' + ' '.repeat(marker.length)) + '\n';
+        }
+        return '\n' + out + '\n';
+    }
+
+    function tableToMd(table) {
+        const rows = Array.from(table.querySelectorAll('tr')).map((tr) =>
+            Array.from(tr.children)
+                .filter((c) => /^t[hd]$/i.test(c.tagName))
+                .map((c) => processContent(c).replace(/\s*\n+\s*/g, ' ').replace(/\|/g, '\\|'))
+        );
+        if (rows.length === 0) return '';
+        const width = Math.max(...rows.map((r) => r.length));
+        const line = (r) => '| ' + Array.from({ length: width }, (_, i) => r[i] || '').join(' | ') + ' |';
+        const [head, ...body] = rows;
+        return (
+            '\n' +
+            [line(head), line(Array(width).fill('---')), ...body.map(line)].join('\n') +
+            '\n\n'
+        );
     }
 
     function processContent(node) {
@@ -53,7 +101,16 @@
                 if (text.trim()) out += text;
             } else if (child.nodeType === Node.ELEMENT_NODE) {
                 const tag = child.tagName.toLowerCase();
-                if (tag === 'pre') {
+                if (child.classList.contains('katex-display') || child.classList.contains('katex')) {
+                    out += katexToMd(child);
+                } else if (tag === 'ol' || tag === 'ul') {
+                    out += listToMd(child, tag === 'ol');
+                } else if (tag === 'table') {
+                    out += tableToMd(child);
+                } else if (child.hasAttribute('data-d-default-strong')) {
+                    // ChatGPT DIL renderer marks bold text with a span attribute instead of <strong>
+                    out += '**' + (child.textContent || '').trim() + '**';
+                } else if (tag === 'pre') {
                     const code = child.querySelector('code');
                     if (code) {
                         const lang = (code.className.match(/language-(\w+)/) || [])[1] || '';
@@ -114,6 +171,8 @@
                 '[data-testid="conversation-title"]',
                 '.chat-title',
             ];
+            const current = document.querySelector('a[data-interactive-row-link][aria-current="page"]');
+            if (current && current.getAttribute('aria-label')) return current.getAttribute('aria-label').trim();
             for (const sel of selectors) {
                 const el = document.querySelector(sel);
                 if (el && el.textContent && el.textContent.trim()) {
@@ -125,6 +184,7 @@
 
         _firstUserPreview() {
             const el = document.querySelector(
+                '[data-user-message-bubble] .whitespace-pre-wrap, ' +
                 'article[data-turn="user"] .user-message-bubble-color, ' +
                 '[data-message-author-role="user"] .user-message-bubble-color, ' +
                 'article[data-turn="user"] .whitespace-pre-wrap, ' +
@@ -151,6 +211,12 @@
         },
 
         _messageElements() {
+            // Current UI: each message block starts with a print-only role heading.
+            const roleHeadings = document.querySelectorAll('h4[data-conversation-role]');
+            if (roleHeadings.length > 0) {
+                return sortByDomOrder(Array.from(roleHeadings, (h) => h.parentElement));
+            }
+
             const turns = Array.from(
                 document.querySelectorAll(
                     'article[data-turn][data-testid^="conversation-turn"], article[data-turn]'
@@ -168,6 +234,9 @@
         },
 
         _guessRole(el, index) {
+            const heading = el.querySelector(':scope > h4[data-conversation-role]');
+            if (heading) return heading.getAttribute('data-conversation-role');
+
             const turn = el.getAttribute('data-turn');
             if (turn === 'user' || turn === 'assistant') return turn;
 
@@ -200,6 +269,13 @@
                 if (textMessage) return cleanNode(textMessage).textContent.trim();
 
                 return cleanNode(el).textContent.trim();
+            }
+
+            const roots = el.querySelectorAll('[data-markdown-text-style="assistant-message"]');
+            if (roots.length > 0) {
+                return Array.from(roots, (r) => processContent(cleanNode(r)))
+                    .filter(Boolean)
+                    .join('\n\n');
             }
 
             const markdown = el.matches('.markdown') ? el : el.querySelector('.markdown');
@@ -659,14 +735,15 @@
 
     function getHeaderSelector(platform) {
         if (platform === 'claude') return '[data-testid="wiggle-controls-actions"]';
-        return '#conversation-header-actions';
+        return '[data-app-shell-main-titlebar] [data-app-shell-header-obstacle], #conversation-header-actions';
     }
 
     function createSplitButton(platform) {
         const icons = getIcons(platform);
         const group = document.createElement('div');
         group.id = 'chatgpt-export-group';
-        group.style.cssText = 'position: relative; display: flex; align-items: center;';
+        // ChatGPT's titlebar is pointer-events:none; re-enable clicks on our group.
+        group.style.cssText = 'position: relative; display: flex; align-items: center; pointer-events: auto;';
 
         const sharedBtnStyle = [
             'display: inline-flex',

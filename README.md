@@ -38,7 +38,7 @@ Assistant response with full formatting (code blocks, headings, lists, links, bo
 ...
 ```
 
-HTML elements converted: headings (`h1`-`h6`), code blocks with language detection, inline code, links, bold/italic, blockquotes, lists.
+HTML elements converted: headings (`h1`-`h6`), code blocks with language detection, inline code, links, bold/italic, blockquotes, ordered/unordered lists, tables, KaTeX math (`$...$` / `$$...$$`).
 
 ## Installation
 
@@ -51,7 +51,7 @@ HTML elements converted: headings (`h1`-`h6`), code blocks with language detecti
 
 | Site | URL pattern | Header integration |
 |------|-------------|-------------------|
-| ChatGPT | `chatgpt.com/*`, `*.openai.com/*` | `#conversation-header-actions` |
+| ChatGPT | `chatgpt.com/*`, `*.openai.com/*` | `[data-app-shell-main-titlebar] [data-app-shell-header-obstacle]` (fallback: `#conversation-header-actions`) |
 | Claude | `claude.ai/*`, `*.claude.ai/*` | `[data-testid="wiggle-controls-actions"]` |
 
 ## License
